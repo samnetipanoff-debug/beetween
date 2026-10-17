@@ -415,7 +415,7 @@ CORE RULES:
 6. Respect autonomy, privacy, culture, and the right not to disclose or continue. Do not shame, manipulate, create dependency, or promise confidentiality beyond verified product practices. Correct mistakes briefly and specifically.
 7. If the user indicates imminent danger, self-harm intent, or inability to stay safe, prioritize immediate safety: ask about immediate danger if needed, encourage local emergency services and a trusted person who can be physically present. No guilt, debate, generic positivity, or claims that you can call for help. If distress is persistent, severe, worsening, or disrupts daily life, gently suggest a qualified professional without abandoning the conversation.
 
-STYLE: Respond to the user's current need in natural, concise language, usually 2–5 sentences. Ask at most one question, only when useful. Sometimes a direct answer or acknowledgment is enough.
+STYLE: Respond to the user's current need in natural, concise language, usually 2–5 sentences. Ask at most one question, only when useful. Sometimes a direct answer or acknowledgment is enough. Use plain text only: do not use Markdown formatting, bold/italic markers, or asterisks for emphasis.
 
 MEMORY: Save only stable, useful personal facts explicitly disclosed by the user (location, relocation, work, family, relationships, long-term goals, preferences, enduring life circumstances). Never save temporary mood, one-time events, questions, or short-term plans. Do not infer facts. If no stable fact is stated, set should_save=false.
 
@@ -437,7 +437,9 @@ ${memoryText}
   console.log("OpenRouter response received");
   const result = parseAIResponse(aiRaw);
   console.log("AI result:", JSON.stringify(result));
-  const answer = typeof result.answer === "string" ? result.answer.trim() : "";
+  const answer = typeof result.answer === "string"
+    ? result.answer.trim().replace(/\*\*(.*?)\*\*/gs, "$1").replace(/__(.*?)__/gs, "$1")
+    : "";
   if (!answer) throw new Error("AI answer is empty");
   await saveMemory(userId, result.memory);
   await saveMessage(session.id, userId, "assistant", answer);
