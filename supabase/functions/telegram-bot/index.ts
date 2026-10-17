@@ -306,7 +306,7 @@ async function showReferralInfo(chatId: number | string, userId: string) {
 }
 
 function parseBetweenInvoicePayload(payload: string) {
-  const match = /^between30_([0-9a-f-]{36})_(\\d+)_(\\d+)$/.exec(payload);
+  const match = /^between30_([0-9a-f-]{36})_(\d+)_(\d+)$/.exec(payload);
   if (!match) return null;
   const price = Number(match[2]);
   const timestamp = Number(match[3]);
@@ -572,7 +572,7 @@ async function handleStart(chatId: number | string, telegramUser: any, startPayl
 
 Просто расскажи, что у тебя сейчас на душе. 🤍`;
   const welcomeText = referralAccepted
-    ? `${text}\n\n🎁 Друг пригласил тебя в BETWEEN. После 5 AI-ответов тебе будет доступен обычный бесплатный лимит, а пригласивший получит бонус.`
+    ? `${text}\n\n🎁 Тебя пригласили в BETWEEN. Когда ты отправишь 5 AI-сообщений, пригласивший тебя человек получит бонусный доступ.`
     : text;
   await sendTelegramMessage(chatId, welcomeText, true, null, user.id);
 }
@@ -597,7 +597,6 @@ async function handleAIChat(chatId: number | string, userId: string, userText: s
 
   const accessType = access.access_type;
   let replySent = false;
-  let assistantAnswer = "";
   try {
     const session = await getOrCreateSession(userId);
     await saveMessage(session.id, userId, "user", userText);
@@ -642,7 +641,6 @@ ${memoryText}
       ? result.answer.trim().replace(/\*\*(.*?)\*\*/gs, "$1").replace(/__(.*?)__/gs, "$1")
       : "";
     if (!answer) throw new Error("AI answer is empty");
-    assistantAnswer = answer;
     await saveMemory(userId, result.memory);
     await saveMessage(session.id, userId, "assistant", answer);
     await supabase.from("sessions").update({ updated_at: new Date().toISOString() }).eq("id", session.id);
