@@ -1,0 +1,10 @@
+project_id = "cijjzrofrbneatapcpqr"
+
+# The website chat requires an authenticated Supabase user.
+[functions.chat-with-psychologist]
+verify_jwt = true
+
+# Telegram sends webhook requests without a Supabase JWT.
+# The handler uses its configured service-role key server-side.
+[functions.telegram-bot]
+verify_jwt = false
