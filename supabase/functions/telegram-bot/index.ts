@@ -588,6 +588,40 @@ async function handleStart(chatId: number | string, telegramUser: any, startPayl
 }
 
 // MAIN AI CHAT
+async function maybeOfferSessionPause(chatId: number | string, userId: string, sessionId: string) {
+  const { count, error: countError } = await supabase
+    .from("messages")
+    .select("id", { count: "exact", head: true })
+    .eq("session_id", sessionId)
+    .eq("role", "assistant");
+  if (countError) {
+    console.error("Count session replies failed:", countError.message);
+    return;
+  }
+  if ((count ?? 0) < 12) return;
+
+  const { error: insertError } = await supabase
+    .from("bot_session_pause_offers")
+    .insert({ session_id: sessionId, user_id: userId });
+  if (insertError) {
+    // A unique conflict means this session already received its one pause offer.
+    if (insertError.code !== "23505") {
+      console.error("Create session pause offer failed:", insertError.message);
+    }
+    return;
+  }
+
+  await sendTelegramMessage(
+    chatId,
+    "Мы уже довольно долго это обсуждаем. Если тебе полезно, можем продолжить, сделать паузу или завершить на этом. Решать тебе. 🤍",
+    false,
+    { inline_keyboard: [
+      [{ text: "💬 Продолжить", callback_data: "session_continue" }],
+      [{ text: "☕ Сделать паузу", callback_data: "session_pause" }],
+    ] }
+  );
+}
+
 async function handleAIChat(chatId: number | string, userId: string, userText: string) {
   await ensureBotEntitlement(userId);
   const { data: access, error: accessError } = await supabase.rpc("consume_bot_ai_reply", { p_user_id: userId });
@@ -663,6 +697,7 @@ ${memoryText}
     await supabase.from("sessions").update({ updated_at: new Date().toISOString() }).eq("id", session.id);
     await sendTelegramMessage(chatId, answer, true);
     replySent = true;
+    await maybeOfferSessionPause(chatId, userId, session.id);
   } catch (error) {
     const { error: refundError } = await supabase.rpc("refund_bot_ai_reply", {
       p_user_id: userId,
@@ -709,6 +744,29 @@ async function handleCallbackQuery(update: any) {
   if (!chatId || !telegramUser) return true;
   const user = await getOrCreateTelegramUser(telegramUser);
   await telegramRequest("answerCallbackQuery", { callback_query_id: callbackId });
+
+  if (data === "session_continue" || data === "session_pause") {
+    const { data: activeSession } = await supabase
+      .from("sessions")
+      .select("id")
+      .eq("user_id", user.id)
+      .order("updated_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (activeSession?.id) {
+      const { error: choiceError } = await supabase
+        .from("bot_session_pause_offers")
+        .update({ choice: data === "session_continue" ? "continue" : "pause" })
+        .eq("session_id", activeSession.id)
+        .eq("user_id", user.id);
+      if (choiceError) console.error("Save session pause choice failed:", choiceError.message);
+    }
+    const choiceText = data === "session_pause"
+      ? "Хорошо, можем остановиться здесь. Не нужно ничего решать прямо сейчас. Если захочешь вернуться, просто напиши BETWEEN — продолжим, когда тебе будет удобно. 🤍"
+      : "Конечно, продолжим. Ты сам решаешь, сколько тебе сейчас нужно поговорить. 🤍";
+    await sendTelegramMessage(chatId, choiceText, true);
+    return true;
+  }
 
   if (data === "subscription") {
     await showSubscription(chatId, user.id);
