@@ -160,11 +160,7 @@ begin
 
   update public.bot_entitlements
     set premium_expires_at = new_expiry,
-        premium_replies_remaining = case
-          when premium_expires_at is not null and premium_expires_at > now()
-            then premium_replies_remaining
-          else 300
-        end,
+        premium_replies_remaining = premium_replies_remaining + 300,
         plan_type = p_plan_type,
         premium_quota_reset_at = case
           when p_plan_type = 'yearly' then now() + interval '30 days'
