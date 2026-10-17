@@ -23,7 +23,6 @@ For `telegram-bot`:
 - `OPENROUTER_API_KEY`
 - `SUPABASE_URL`
 - `SUPABASE_SERVICE_ROLE_KEY`
-- `BETWEEN_SUBSCRIPTION_PRICE_STARS` — optional until pricing is decided; set it to a positive whole-number Telegram Stars amount to enable purchase invoices.
 
 For `chat-with-psychologist`:
 - `OPENROUTER_API_KEY`
@@ -66,4 +65,4 @@ These documents set product behavior boundaries; they do not establish clinical 
 
 The Telegram bot supports a 20-reply free quota, a 30-day/300-reply paid entitlement, Telegram Stars payment handling, and referral rewards. Read [subscription/referral setup and testing](docs/subscriptions-and-referrals.md).
 
-Apply `supabase/migrations/20261017000100_between_subscriptions_referrals.sql` in Supabase SQL Editor **before** deploying the updated `telegram-bot` function. The purchase button remains disabled until `BETWEEN_SUBSCRIPTION_PRICE_STARS` is configured. Paid access is currently a one-time 30-day purchase, not automatic recurring billing.
+Apply both `supabase/migrations/20261017000100_between_subscriptions_referrals.sql` and `supabase/migrations/20261017000200_between_annual_and_refunds.sql` in Supabase SQL Editor **before** deploying the updated `telegram-bot` function. Current prices are 990 Telegram Stars for 30 days and 5,590 Stars for 365 days. Purchases are one-time and do not auto-renew. Annual access refreshes the 300-reply quota every 30 days. Refund requests are recorded for support review; the Telegram Stars API supports full-payment refunds, not prorated partial refunds.
