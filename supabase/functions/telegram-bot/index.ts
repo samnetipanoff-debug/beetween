@@ -218,7 +218,7 @@ async function saveMemory(userId: string, memory: any) {
   const categories = ["relocation", "location", "work", "family", "relationships", "goals", "preferences", "life", "other"];
   const category = categories.includes(memory.category) ? memory.category : "other";
   // The database stores importance on a 0..1 scale, while the AI prompt uses 1..3.
-  const aiImportance = typeof memory.importance === "number" ? memory.importance : 1;
+  const aiImportance = typeof memory.importance === "number" ? memory.importance : 2;
   const importance = Math.max(0, Math.min(1, (aiImportance - 1) / 2));
   const { error } = await supabase.from("memories").insert({
     user_id: userId,
