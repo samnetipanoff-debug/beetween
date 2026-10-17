@@ -23,6 +23,7 @@ For `telegram-bot`:
 - `OPENROUTER_API_KEY`
 - `SUPABASE_URL`
 - `SUPABASE_SERVICE_ROLE_KEY`
+- `BETWEEN_SUBSCRIPTION_PRICE_STARS` — optional until pricing is decided; set it to a positive whole-number Telegram Stars amount to enable purchase invoices.
 
 For `chat-with-psychologist`:
 - `OPENROUTER_API_KEY`
@@ -59,3 +60,10 @@ BETWEEN is a non-clinical emotional-support companion. Its response rules and qu
 - [Behavior evaluation and regression cases](docs/psychological-support-evaluation-cases.md)
 
 These documents set product behavior boundaries; they do not establish clinical effectiveness or mean the test cases have passed. Run the evaluation cases against the actual candidate runtime after changes to the system prompt or conversation flow. The protocol and runtime prompt must be kept aligned.
+
+
+## Subscriptions and referrals
+
+The Telegram bot supports a 20-reply free quota, a 30-day/300-reply paid entitlement, Telegram Stars payment handling, and referral rewards. Read [subscription/referral setup and testing](docs/subscriptions-and-referrals.md).
+
+Apply `supabase/migrations/20261017000100_between_subscriptions_referrals.sql` in Supabase SQL Editor **before** deploying the updated `telegram-bot` function. The purchase button remains disabled until `BETWEEN_SUBSCRIPTION_PRICE_STARS` is configured. Paid access is currently a one-time 30-day purchase, not automatic recurring billing.
