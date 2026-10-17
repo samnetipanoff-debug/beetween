@@ -50,3 +50,12 @@ https://cijjzrofrbneatapcpqr.supabase.co/functions/v1/telegram-bot
 
 - `chat-with-psychologist`: JWT verification enabled; requires an authenticated Supabase user.
 - `telegram-bot`: JWT verification disabled because Telegram webhook requests do not carry a Supabase JWT. The function must validate/process requests server-side and keep all secrets in Supabase.
+
+## Psychological-support behavior policy
+
+BETWEEN is a non-clinical emotional-support companion. Its response rules and quality checks are documented separately:
+
+- [Evidence-informed psychological-support protocol](docs/psychological-support-protocol.md)
+- [Behavior evaluation and regression cases](docs/psychological-support-evaluation-cases.md)
+
+These documents set product behavior boundaries; they do not establish clinical effectiveness or mean the test cases have passed. Run the evaluation cases against the actual candidate runtime after changes to the system prompt or conversation flow. The protocol and runtime prompt must be kept aligned.
