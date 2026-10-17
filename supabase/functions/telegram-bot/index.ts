@@ -4,7 +4,8 @@ const TELEGRAM_BOT_TOKEN = Deno.env.get("TELEGRAM_BOT_TOKEN");
 const OPENROUTER_API_KEY = Deno.env.get("OPENROUTER_API_KEY");
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL");
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
-const BETWEEN_SUBSCRIPTION_PRICE_STARS = Number(Deno.env.get("BETWEEN_SUBSCRIPTION_PRICE_STARS") || 0);
+const BETWEEN_MONTHLY_PRICE_STARS = 990;
+const BETWEEN_YEARLY_PRICE_STARS = 5590;
 
 if (!TELEGRAM_BOT_TOKEN || !OPENROUTER_API_KEY || !SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
   throw new Error("Missing required environment variables");
@@ -238,10 +239,10 @@ async function saveMemory(userId: string, memory: any) {
 
 
 // SUBSCRIPTIONS, QUOTAS, AND REFERRALS
-function configuredStarsPrice() {
-  return Number.isSafeInteger(BETWEEN_SUBSCRIPTION_PRICE_STARS) && BETWEEN_SUBSCRIPTION_PRICE_STARS > 0
-    ? BETWEEN_SUBSCRIPTION_PRICE_STARS
-    : null;
+function subscriptionPlan(planType: string) {
+  if (planType === "monthly") return { planType, price: BETWEEN_MONTHLY_PRICE_STARS, termDays: 30, title: "BETWEEN Plus — 30 дней", description: "30 дней доступа и 300 AI-ответов." };
+  if (planType === "yearly") return { planType, price: BETWEEN_YEARLY_PRICE_STARS, termDays: 365, title: "BETWEEN Plus — 1 год", description: "365 дней доступа. Лимит 300 AI-ответов обновляется каждые 30 дней." };
+  return null;
 }
 
 async function ensureBotEntitlement(userId: string) {
@@ -252,7 +253,7 @@ async function ensureBotEntitlement(userId: string) {
 async function showAccessStatus(chatId: number | string, userId: string) {
   await ensureBotEntitlement(userId);
   const { data, error } = await supabase.from("bot_entitlements")
-    .select("free_replies_remaining, premium_replies_remaining, premium_expires_at")
+    .select("free_replies_remaining, premium_replies_remaining, premium_expires_at, premium_quota_reset_at, plan_type")
     .eq("user_id", userId)
     .maybeSingle();
   if (error) throw new Error(`Load entitlement failed: ${error.message}`);
@@ -262,26 +263,30 @@ async function showAccessStatus(chatId: number | string, userId: string) {
   const expiry = premiumActive
     ? new Date(data.premium_expires_at).toLocaleDateString("ru-RU", { day: "2-digit", month: "long", year: "numeric" })
     : null;
+  const nextQuota = premiumActive && data?.premium_quota_reset_at
+    ? new Date(data.premium_quota_reset_at).toLocaleDateString("ru-RU", { day: "2-digit", month: "long" })
+    : null;
+  const planLabel = data?.plan_type === "yearly" ? "Годовой" : "Месячный";
   const text = premiumActive
-    ? `💎 Твой доступ BETWEEN\n\nПодписка активна до: ${expiry}\nОсталось AI-ответов: ${data.premium_replies_remaining}\nБесплатных ответов: ${data.free_replies_remaining}`
+    ? `💎 Твой доступ BETWEEN\n\nТариф: ${planLabel}\nДоступ активен до: ${expiry}\nОсталось AI-ответов: ${data.premium_replies_remaining}\n${nextQuota ? `Следующее обновление лимита: ${nextQuota}\n` : ""}Бесплатных ответов: ${data.free_replies_remaining}\n\nПокупка разовая, автоматического списания нет.`
     : `💎 Твой доступ BETWEEN\n\nБесплатных AI-ответов осталось: ${data?.free_replies_remaining ?? 0}\nБонусных/платных AI-ответов: ${data?.premium_replies_remaining ?? 0}\n\n${data?.premium_replies_remaining > 0 ? "Премиум-лимит сейчас недоступен или срок доступа истёк." : "Чтобы продолжить разговоры, оформи подписку или пригласи друга."}`;
   await sendTelegramMessage(chatId, text, true, { inline_keyboard: [
     [{ text: "💎 Подписка", callback_data: "subscription" }],
     [{ text: "🎁 Пригласить друга", callback_data: "referral" }],
+    [{ text: "↩️ Возврат / помощь с оплатой", callback_data: "refund_request" }],
   ] });
 }
 
 async function showSubscription(chatId: number | string, userId: string) {
   await ensureBotEntitlement(userId);
-  const price = configuredStarsPrice();
-  const keyboard: any[] = [];
-  if (price) keyboard.push([{ text: `⭐ Купить 30 дней — ${price} Stars`, callback_data: "subscription_buy" }]);
-  keyboard.push([{ text: "📊 Мой доступ", callback_data: "access_status" }]);
-  keyboard.push([{ text: "🎁 Пригласить друга", callback_data: "referral" }]);
-  const priceText = price
-    ? `Стоимость: ${price} Telegram Stars за 30 дней.\n`
-    : "Стоимость пока настраивается, покупка ещё не доступна.\n";
-  const text = `💎 BETWEEN Plus\n\n30 дней доступа и 300 AI-ответов.\n${priceText}\nЕсли срок подписки ещё действует, новая покупка продлит его на 30 дней и добавит ещё 300 AI-ответов. Продление не списывается автоматически.\n\nПриглашай друзей, чтобы получать бонусные дни.`;
+  const keyboard: any[] = [
+    [{ text: "⭐ Месяц — 990 Stars", callback_data: "subscription_buy_monthly" }],
+    [{ text: "⭐ Год — 5 590 Stars (экономия около 53%)", callback_data: "subscription_buy_yearly" }],
+    [{ text: "📊 Мой доступ", callback_data: "access_status" }],
+    [{ text: "🎁 Пригласить друга", callback_data: "referral" }],
+    [{ text: "↩️ Возврат / помощь с оплатой", callback_data: "refund_request" }],
+  ];
+  const text = `💎 BETWEEN Plus\n\nМесячный тариф: 990 Stars — 30 дней и 300 AI-ответов.\nГодовой тариф: 5 590 Stars — 365 дней; лимит 300 AI-ответов обновляется каждые 30 дней.\n\nПокупка разовая, автоматического списания нет. Новая покупка продлевает текущий срок доступа.\n\nЕсли хочешь запросить возврат или помощь с платежом, выбери соответствующий пункт. Telegram Stars поддерживает возврат полного платежа, но не частичный возврат части суммы за оставшиеся дни.`;
   await sendTelegramMessage(chatId, text, true, { inline_keyboard: keyboard });
 }
 
@@ -306,29 +311,31 @@ async function showReferralInfo(chatId: number | string, userId: string) {
 }
 
 function parseBetweenInvoicePayload(payload: string) {
-  const match = /^between30_([0-9a-f-]{36})_(\d+)_(\d+)$/.exec(payload);
+  const match = /^between_(monthly|yearly)_([0-9a-f-]{36})_(\d+)_(\d+)$/.exec(payload);
   if (!match) return null;
-  const price = Number(match[2]);
-  const timestamp = Number(match[3]);
-  if (!Number.isSafeInteger(price) || price <= 0 || !Number.isSafeInteger(timestamp)) return null;
-  return { userId: match[1], price, timestamp };
+  const plan = subscriptionPlan(match[1]);
+  const userId = match[2];
+  const price = Number(match[3]);
+  const timestamp = Number(match[4]);
+  if (!plan || !Number.isSafeInteger(price) || price !== plan.price || !Number.isSafeInteger(timestamp)) return null;
+  return { userId, price, timestamp, planType: plan.planType, termDays: plan.termDays, title: plan.title, description: plan.description };
 }
 
-async function sendSubscriptionInvoice(chatId: number | string, userId: string) {
-  const price = configuredStarsPrice();
-  if (!price) {
-    await sendTelegramMessage(chatId, "Стоимость подписки пока настраивается. Покупка станет доступна после публикации цены.", true);
+async function sendSubscriptionInvoice(chatId: number | string, userId: string, planType: string) {
+  const plan = subscriptionPlan(planType);
+  if (!plan) {
+    await sendTelegramMessage(chatId, "Не удалось определить тариф. Выбери подписку ещё раз.", true);
     return;
   }
-  const payload = `between30_${userId}_${price}_${Date.now()}`;
+  const payload = `between_${plan.planType}_${userId}_${plan.price}_${Date.now()}`;
   await telegramRequest("sendInvoice", {
     chat_id: chatId,
-    title: "BETWEEN Plus — 30 дней",
-    description: "30 дней доступа к AI-разговорам и 300 AI-ответов.",
+    title: plan.title,
+    description: plan.description,
     payload,
     provider_token: "",
     currency: "XTR",
-    prices: [{ label: "BETWEEN Plus — 30 дней", amount: price }],
+    prices: [{ label: plan.title, amount: plan.price }],
   });
 }
 
@@ -369,18 +376,21 @@ async function handleSuccessfulPayment(message: any) {
     return;
   }
 
-  const { data, error } = await supabase.rpc("process_bot_stars_payment", {
+  const { data, error } = await supabase.rpc("process_bot_stars_payment_v2", {
     p_user_id: user.id,
     p_telegram_payment_charge_id: payment.telegram_payment_charge_id,
     p_provider_payment_charge_id: payment.provider_payment_charge_id ?? "",
     p_currency: payment.currency,
     p_total_amount: payment.total_amount,
     p_invoice_payload: payment.invoice_payload,
+    p_plan_type: parsed.planType,
+    p_term_days: parsed.termDays,
   });
   if (error) throw new Error(`Process Stars payment failed: ${error.message}`);
 
   if (data?.processed) {
-    await sendTelegramMessage(chatId, "Оплата прошла успешно! 💎\n\nТебе начислены 30 дней BETWEEN Plus и 300 AI-ответов. Спасибо за поддержку проекта.", true);
+    const planName = parsed.planType === "yearly" ? "365 дней" : "30 дней";
+    await sendTelegramMessage(chatId, `Оплата прошла успешно! 💎\n\nТебе начислены ${planName} BETWEEN Plus. Лимит — 300 AI-ответов, для годового тарифа он обновляется каждые 30 дней. Спасибо за поддержку проекта.`, true);
   } else {
     await sendTelegramMessage(chatId, "Этот платёж уже был обработан. Проверь свой доступ в разделе «📊 Мой доступ».", true);
   }
@@ -698,8 +708,32 @@ async function handleCallbackQuery(update: any) {
     return true;
   }
 
-  if (data === "subscription_buy") {
-    await sendSubscriptionInvoice(chatId, user.id);
+  if (data === "subscription_buy_monthly") {
+    await sendSubscriptionInvoice(chatId, user.id, "monthly");
+    return true;
+  }
+
+  if (data === "subscription_buy_yearly") {
+    await sendSubscriptionInvoice(chatId, user.id, "yearly");
+    return true;
+  }
+
+  if (data === "refund_request") {
+    const { data: request, error } = await supabase.rpc("request_bot_refund_review", {
+      p_user_id: user.id,
+      p_request_type: "full_refund_review",
+      p_user_message: "Пользователь запросил возврат через меню бота.",
+    });
+    if (error) {
+      console.error("Create refund request failed:", error.message);
+      await sendTelegramMessage(chatId, "Не удалось создать запрос. Напиши /paysupport и опиши проблему с оплатой.", true);
+    } else if (request?.created) {
+      await sendTelegramMessage(chatId, "Запрос на возврат зарегистрирован. Это пока не возврат денег: платёж нужно проверить и обработать отдельно. Telegram Stars поддерживает полный возврат платежа, но не возврат только остатка за неиспользованные дни. Доступ не изменён. Сохрани номер запроса: " + request.request_id + ".", true);
+    } else if (request?.reason === "already_pending") {
+      await sendTelegramMessage(chatId, "По последнему платежу уже есть запрос на рассмотрении. Доступ пока не изменён.", true);
+    } else {
+      await sendTelegramMessage(chatId, "Не найден сохранённый платёж для возврата. Если у тебя есть вопрос по оплате, напиши /paysupport.", true);
+    }
     return true;
   }
 
@@ -847,6 +881,11 @@ Deno.serve(async (req) => {
 
     const userText = typeof message.text === "string" ? message.text.trim() : "";
     if (!userText) return new Response("OK", { status: 200 });
+
+    if (userText === "/paysupport") {
+      await sendTelegramMessage(chatId, "Помощь с оплатой BETWEEN\n\nОпиши, что произошло, и укажи дату и сумму платежа. Не отправляй пароли или коды подтверждения. Запрос на возврат можно создать в разделе «💎 Подписка». Возврат обрабатывается отдельно; автоматический частичный возврат за оставшиеся дни Telegram Stars не поддерживает.", true);
+      return new Response("OK", { status: 200 });
+    }
 
     const user = await getOrCreateTelegramUser(telegramUser);
     const pendingMood = await getPendingMood(user.id);
