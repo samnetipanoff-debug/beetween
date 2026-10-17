@@ -137,7 +137,7 @@ function parseAIResponse(text: string) {
       const answerMatch = jsonText.match(/"answer"\s*:\s*"((?:\\.|[^"\\])*)"/s);
       if (answerMatch) {
         try {
-          return { answer: JSON.parse(\`"\${answerMatch[1]}"\`), memory: { should_save: false } };
+          return { answer: JSON.parse('"' + answerMatch[1] + '"'), memory: { should_save: false } };
         } catch {
           // Fall through to a safe user-facing response.
         }
