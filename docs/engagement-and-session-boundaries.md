@@ -15,10 +15,10 @@ BETWEEN should earn repeat use through usefulness, trust, and user control—not
 ## Suggested implementation
 
 ### 1. User-controlled pause
-After a long exchange (initial experiment: 12–15 AI replies in the current session), offer a low-pressure choice such as:
+The current implementation offers a low-pressure choice after 12 AI replies in a session, at most once per session:
 “Мы уже довольно долго это обсуждаем. Хочешь продолжить, сделать паузу или коротко зафиксировать главное на потом?”
 
-This is a suggestion, not a hard stop. Avoid showing it repeatedly; store a per-session flag so it appears at most once.
+This is a suggestion, not a hard stop. The offer is recorded in `bot_session_pause_offers` and does not block subsequent messages. The user can continue or pause; the choice is stored for product evaluation.
 
 ### 2. Natural closing
 If the user says they are done, help close with one or two sentences and optionally a short recap. Do not force a question or send an unsolicited follow-up.
@@ -34,4 +34,4 @@ Track only product-level metrics that are necessary: first-week return rate, con
 
 ## Current implementation status
 
-The system prompt in `supabase/functions/telegram-bot/index.ts` now instructs the model not to force session endings, not to stop at a positive emotional moment for retention, and to offer user-controlled pauses in long or tiring exchanges. This is prompt-level behavior only; the 12–15-reply trigger, per-session flag, and opt-in reminders are not implemented as deterministic product features yet.
+The system prompt in `supabase/functions/telegram-bot/index.ts` instructs the model not to force session endings or stop at a positive emotional moment for retention. A deterministic prompt is also implemented: after 12 AI replies, the bot offers a user-controlled continue/pause choice once per session. Apply `supabase/migrations/20261017000300_between_session_pause_offers.sql` before deploying the updated function. Opt-in reminders and session summaries are not implemented yet.
