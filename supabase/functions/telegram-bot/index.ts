@@ -4,6 +4,7 @@ const TELEGRAM_BOT_TOKEN = Deno.env.get("TELEGRAM_BOT_TOKEN");
 const OPENROUTER_API_KEY = Deno.env.get("OPENROUTER_API_KEY");
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL");
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+const BETWEEN_SUBSCRIPTION_PRICE_STARS = Number(Deno.env.get("BETWEEN_SUBSCRIPTION_PRICE_STARS") || 0);
 
 if (!TELEGRAM_BOT_TOKEN || !OPENROUTER_API_KEY || !SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
   throw new Error("Missing required environment variables");
@@ -88,6 +89,8 @@ async function sendTelegramMessage(chatId: number | string, text: string, withMe
         [{ text: "💬 Поговорить" }, { text: "🧠 Что ты обо мне знаешь" }],
         [{ text: "🌿 Моё состояние" }, { text: "📊 Моя история состояния" }],
         [{ text: "📈 Моя статистика" }, { text: "⚙️ Настройки" }],
+        [{ text: "💎 Подписка" }, { text: "🎁 Пригласить друга" }],
+        [{ text: "📊 Мой доступ" }],
         [{ text: newsButtonText }],
         [{ text: "🆘 Помощь" }],
       ],
@@ -233,6 +236,156 @@ async function saveMemory(userId: string, memory: any) {
   console.log("Memory saved:", memory.content);
 }
 
+
+// SUBSCRIPTIONS, QUOTAS, AND REFERRALS
+function configuredStarsPrice() {
+  return Number.isSafeInteger(BETWEEN_SUBSCRIPTION_PRICE_STARS) && BETWEEN_SUBSCRIPTION_PRICE_STARS > 0
+    ? BETWEEN_SUBSCRIPTION_PRICE_STARS
+    : null;
+}
+
+async function ensureBotEntitlement(userId: string) {
+  const { error } = await supabase.rpc("ensure_bot_entitlement", { p_user_id: userId });
+  if (error) throw new Error(`Ensure entitlement failed: ${error.message}`);
+}
+
+async function showAccessStatus(chatId: number | string, userId: string) {
+  await ensureBotEntitlement(userId);
+  const { data, error } = await supabase.from("bot_entitlements")
+    .select("free_replies_remaining, premium_replies_remaining, premium_expires_at")
+    .eq("user_id", userId)
+    .maybeSingle();
+  if (error) throw new Error(`Load entitlement failed: ${error.message}`);
+
+  const now = Date.now();
+  const premiumActive = !!data?.premium_expires_at && new Date(data.premium_expires_at).getTime() > now;
+  const expiry = premiumActive
+    ? new Date(data.premium_expires_at).toLocaleDateString("ru-RU", { day: "2-digit", month: "long", year: "numeric" })
+    : null;
+  const text = premiumActive
+    ? `💎 Твой доступ BETWEEN\n\nПодписка активна до: ${expiry}\nОсталось AI-ответов: ${data.premium_replies_remaining}\nБесплатных ответов: ${data.free_replies_remaining}`
+    : `💎 Твой доступ BETWEEN\n\nБесплатных AI-ответов осталось: ${data?.free_replies_remaining ?? 0}\nБонусных/платных AI-ответов: ${data?.premium_replies_remaining ?? 0}\n\n${data?.premium_replies_remaining > 0 ? "Премиум-лимит сейчас недоступен или срок доступа истёк." : "Чтобы продолжить разговоры, оформи подписку или пригласи друга."}`;
+  await sendTelegramMessage(chatId, text, true, { inline_keyboard: [
+    [{ text: "💎 Подписка", callback_data: "subscription" }],
+    [{ text: "🎁 Пригласить друга", callback_data: "referral" }],
+  ] });
+}
+
+async function showSubscription(chatId: number | string, userId: string) {
+  await ensureBotEntitlement(userId);
+  const price = configuredStarsPrice();
+  const keyboard: any[] = [];
+  if (price) keyboard.push([{ text: `⭐ Купить 30 дней — ${price} Stars`, callback_data: "subscription_buy" }]);
+  keyboard.push([{ text: "📊 Мой доступ", callback_data: "access_status" }]);
+  keyboard.push([{ text: "🎁 Пригласить друга", callback_data: "referral" }]);
+  const priceText = price
+    ? `Стоимость: ${price} Telegram Stars за 30 дней.\n`
+    : "Стоимость пока настраивается, покупка ещё не доступна.\n";
+  const text = `💎 BETWEEN Plus\n\n30 дней доступа и 300 AI-ответов.\n${priceText}\nЕсли срок подписки ещё действует, новая покупка продлит его на 30 дней и добавит ещё 300 AI-ответов. Продление не списывается автоматически.\n\nПриглашай друзей, чтобы получать бонусные дни.`;
+  await sendTelegramMessage(chatId, text, true, { inline_keyboard: keyboard });
+}
+
+async function showReferralInfo(chatId: number | string, userId: string) {
+  const { data, error } = await supabase.from("bot_referrals")
+    .select("id, bonus_granted, qualifying_ai_replies")
+    .eq("referrer_user_id", userId);
+  if (error) throw new Error(`Load referrals failed: ${error.message}`);
+
+  const me = await telegramRequest("getMe", {});
+  const username = me?.result?.username;
+  if (!username) throw new Error("Could not determine Telegram bot username");
+  const link = `https://t.me/${username}?start=ref_${userId}`;
+  const referrals = data ?? [];
+  const rewarded = referrals.filter((r: any) => r.bonus_granted).length;
+  const inProgress = referrals.filter((r: any) => !r.bonus_granted).length;
+  const text = `🎁 Приглашай друзей в BETWEEN\n\nТвоя персональная ссылка:\n${link}\n\nЗа каждого приглашённого друга ты получишь +7 дней доступа и 70 AI-ответов, когда он отправит 5 AI-сообщений.\n\nПриглашено: ${referrals.length}\nБонус начислен: ${rewarded}\nОжидают активации: ${inProgress}\n\nБонус начисляется один раз за нового пользователя. Самоприглашения и повторные бонусы не засчитываются.`;
+  await sendTelegramMessage(chatId, text, true, { inline_keyboard: [
+    [{ text: "📊 Мой доступ", callback_data: "access_status" }],
+    [{ text: "💎 Подписка", callback_data: "subscription" }],
+  ] });
+}
+
+function parseBetweenInvoicePayload(payload: string) {
+  const match = /^between30_([0-9a-f-]{36})_(\\d+)_(\\d+)$/.exec(payload);
+  if (!match) return null;
+  const price = Number(match[2]);
+  const timestamp = Number(match[3]);
+  if (!Number.isSafeInteger(price) || price <= 0 || !Number.isSafeInteger(timestamp)) return null;
+  return { userId: match[1], price, timestamp };
+}
+
+async function sendSubscriptionInvoice(chatId: number | string, userId: string) {
+  const price = configuredStarsPrice();
+  if (!price) {
+    await sendTelegramMessage(chatId, "Стоимость подписки пока настраивается. Покупка станет доступна после публикации цены.", true);
+    return;
+  }
+  const payload = `between30_${userId}_${price}_${Date.now()}`;
+  await telegramRequest("sendInvoice", {
+    chat_id: chatId,
+    title: "BETWEEN Plus — 30 дней",
+    description: "30 дней доступа к AI-разговорам и 300 AI-ответов.",
+    payload,
+    provider_token: "",
+    currency: "XTR",
+    prices: [{ label: "BETWEEN Plus — 30 дней", amount: price }],
+  });
+}
+
+async function handlePreCheckoutQuery(preCheckoutQuery: any) {
+  const id = preCheckoutQuery?.id;
+  const fromId = preCheckoutQuery?.from?.id;
+  const payload = typeof preCheckoutQuery?.invoice_payload === "string" ? preCheckoutQuery.invoice_payload : "";
+  const parsed = parseBetweenInvoicePayload(payload);
+  let ok = false;
+  let errorMessage = "Не удалось проверить оплату. Вернись в BETWEEN и попробуй снова.";
+
+  if (parsed && fromId && preCheckoutQuery.currency === "XTR" && preCheckoutQuery.total_amount === parsed.price) {
+    const { data: user, error } = await supabase.from("telegram_users")
+      .select("id")
+      .eq("telegram_id", fromId)
+      .maybeSingle();
+    if (!error && user?.id === parsed.userId) {
+      ok = true;
+      errorMessage = "";
+    }
+  }
+  await telegramRequest("answerPreCheckoutQuery", ok
+    ? { pre_checkout_query_id: id, ok: true }
+    : { pre_checkout_query_id: id, ok: false, error_message: errorMessage });
+}
+
+async function handleSuccessfulPayment(message: any) {
+  const chatId = message?.chat?.id;
+  const telegramUser = message?.from;
+  const payment = message?.successful_payment;
+  if (!chatId || !telegramUser || !payment) return;
+
+  const user = await getOrCreateTelegramUser(telegramUser);
+  const parsed = parseBetweenInvoicePayload(String(payment.invoice_payload ?? ""));
+  if (!parsed || parsed.userId !== user.id || payment.currency !== "XTR" || payment.total_amount !== parsed.price) {
+    await sendTelegramMessage(chatId, "Не удалось подтвердить параметры платежа автоматически. Напиши в поддержку BETWEEN, не оплачивай повторно.", true);
+    console.error("Invalid successful payment payload/details", { userId: user.id, currency: payment.currency, total_amount: payment.total_amount });
+    return;
+  }
+
+  const { data, error } = await supabase.rpc("process_bot_stars_payment", {
+    p_user_id: user.id,
+    p_telegram_payment_charge_id: payment.telegram_payment_charge_id,
+    p_provider_payment_charge_id: payment.provider_payment_charge_id ?? "",
+    p_currency: payment.currency,
+    p_total_amount: payment.total_amount,
+    p_invoice_payload: payment.invoice_payload,
+  });
+  if (error) throw new Error(`Process Stars payment failed: ${error.message}`);
+
+  if (data?.processed) {
+    await sendTelegramMessage(chatId, "Оплата прошла успешно! 💎\n\nТебе начислены 30 дней BETWEEN Plus и 300 AI-ответов. Спасибо за поддержку проекта.", true);
+  } else {
+    await sendTelegramMessage(chatId, "Этот платёж уже был обработан. Проверь свой доступ в разделе «📊 Мой доступ».", true);
+  }
+}
+
 // MOOD DIARY
 async function startMoodDiary(chatId: number | string) {
   const keyboard = { inline_keyboard: [
@@ -371,6 +524,18 @@ async function handleMenuAction(chatId: number | string, userId: string, text: s
     await showBotNews(chatId, userId);
     return true;
   }
+  if (text === "💎 Подписка") {
+    await showSubscription(chatId, userId);
+    return true;
+  }
+  if (text === "🎁 Пригласить друга") {
+    await showReferralInfo(chatId, userId);
+    return true;
+  }
+  if (text === "📊 Мой доступ") {
+    await showAccessStatus(chatId, userId);
+    return true;
+  }
   if (text === "🆘 Помощь") {
     await sendTelegramMessage(chatId, "🆘 BETWEEN — это пространство для спокойного разговора и поддержки во время переезда и адаптации.\n\nЯ не врач и не заменяю профессиональную помощь.\n\nЕсли тебе прямо сейчас угрожает опасность, обратись в местную экстренную службу или к человеку, которому доверяешь.", true);
     return true;
@@ -379,9 +544,23 @@ async function handleMenuAction(chatId: number | string, userId: string, text: s
 }
 
 // HANDLE START
-async function handleStart(chatId: number | string, telegramUser: any) {
+async function handleStart(chatId: number | string, telegramUser: any, startPayload = "") {
   const firstName = telegramUser?.first_name;
   const user = await getOrCreateTelegramUser(telegramUser);
+  await ensureBotEntitlement(user.id);
+  let referralAccepted = false;
+  const refMatch = /^ref_([0-9a-f-]{36})$/i.exec(startPayload);
+  if (refMatch) {
+    const { data, error } = await supabase.rpc("register_bot_referral", {
+      p_referrer_user_id: refMatch[1],
+      p_referred_user_id: user.id,
+    });
+    if (error) {
+      console.error("Register referral failed:", error.message);
+    } else {
+      referralAccepted = data === true;
+    }
+  }
   const greeting = firstName ? `Привет, ${firstName} 👋` : "Привет 👋";
   const text = `${greeting}
 
@@ -392,14 +571,37 @@ async function handleStart(chatId: number | string, telegramUser: any) {
 Здесь не нужно подбирать правильные слова.
 
 Просто расскажи, что у тебя сейчас на душе. 🤍`;
-  await sendTelegramMessage(chatId, text, true, null, user.id);
+  const welcomeText = referralAccepted
+    ? `${text}\n\n🎁 Друг пригласил тебя в BETWEEN. После 5 AI-ответов тебе будет доступен обычный бесплатный лимит, а пригласивший получит бонус.`
+    : text;
+  await sendTelegramMessage(chatId, welcomeText, true, null, user.id);
 }
 
 // MAIN AI CHAT
 async function handleAIChat(chatId: number | string, userId: string, userText: string) {
-  const session = await getOrCreateSession(userId);
-  await saveMessage(session.id, userId, "user", userText);
-  const memories = await loadMemories(userId);
+  await ensureBotEntitlement(userId);
+  const { data: access, error: accessError } = await supabase.rpc("consume_bot_ai_reply", { p_user_id: userId });
+  if (accessError) throw new Error(`Check/consume AI quota failed: ${accessError.message}`);
+  if (!access?.allowed) {
+    await sendTelegramMessage(chatId,
+      "Ты использовал бесплатные AI-ответы BETWEEN. 🤍\n\nЧтобы продолжить разговор, оформи BETWEEN Plus на 30 дней или пригласи друга и получи бонусный доступ.",
+      true,
+      { inline_keyboard: [
+        [{ text: "💎 Подписка", callback_data: "subscription" }],
+        [{ text: "🎁 Пригласить друга", callback_data: "referral" }],
+        [{ text: "📊 Мой доступ", callback_data: "access_status" }],
+      ] }
+    );
+    return;
+  }
+
+  const accessType = access.access_type;
+  let replySent = false;
+  let assistantAnswer = "";
+  try {
+    const session = await getOrCreateSession(userId);
+    await saveMessage(session.id, userId, "user", userText);
+    const memories = await loadMemories(userId);
   const memoryText = memories.length > 0 ? memories.map((m: any) => `[${m.category}] ${m.content}`).join("\n") : "Нет сохранённых фактов.";
   const history = await loadRecentMessages(session.id);
 
@@ -428,23 +630,57 @@ CURRENT MEMORY:
 ${memoryText}
 `;
 
-  const aiMessages = [
-    { role: "system", content: systemPrompt },
-    ...history.map((m: any) => ({ role: m.role, content: m.content })),
-  ];
-  console.log("Calling OpenRouter...");
-  const aiRaw = await callOpenRouter(aiMessages);
-  console.log("OpenRouter response received");
-  const result = parseAIResponse(aiRaw);
-  console.log("AI result:", JSON.stringify(result));
-  const answer = typeof result.answer === "string"
-    ? result.answer.trim().replace(/\*\*(.*?)\*\*/gs, "$1").replace(/__(.*?)__/gs, "$1")
-    : "";
-  if (!answer) throw new Error("AI answer is empty");
-  await saveMemory(userId, result.memory);
-  await saveMessage(session.id, userId, "assistant", answer);
-  await supabase.from("sessions").update({ updated_at: new Date().toISOString() }).eq("id", session.id);
-  await sendTelegramMessage(chatId, answer, true);
+    const aiMessages = [
+      { role: "system", content: systemPrompt },
+      ...history.map((m: any) => ({ role: m.role, content: m.content })),
+    ];
+    console.log("Calling OpenRouter...");
+    const aiRaw = await callOpenRouter(aiMessages);
+    console.log("OpenRouter response received");
+    const result = parseAIResponse(aiRaw);
+    const answer = typeof result.answer === "string"
+      ? result.answer.trim().replace(/\*\*(.*?)\*\*/gs, "$1").replace(/__(.*?)__/gs, "$1")
+      : "";
+    if (!answer) throw new Error("AI answer is empty");
+    assistantAnswer = answer;
+    await saveMemory(userId, result.memory);
+    await saveMessage(session.id, userId, "assistant", answer);
+    await supabase.from("sessions").update({ updated_at: new Date().toISOString() }).eq("id", session.id);
+    await sendTelegramMessage(chatId, answer, true);
+    replySent = true;
+  } catch (error) {
+    const { error: refundError } = await supabase.rpc("refund_bot_ai_reply", {
+      p_user_id: userId,
+      p_access_type: accessType,
+    });
+    if (refundError) console.error("Could not refund AI reply quota:", refundError.message);
+    throw error;
+  }
+
+  if (replySent) {
+    const { data: referralResult, error: referralError } = await supabase.rpc("record_bot_referral_ai_reply", {
+      p_referred_user_id: userId,
+    });
+    if (referralError) {
+      console.error("Record referral activity failed:", referralError.message);
+    } else if (referralResult?.bonus_granted && referralResult?.referrer_user_id) {
+      try {
+        const { data: referrer } = await supabase.from("telegram_users")
+          .select("telegram_id")
+          .eq("id", referralResult.referrer_user_id)
+          .maybeSingle();
+        if (referrer?.telegram_id) {
+          await sendTelegramMessage(
+            referrer.telegram_id,
+            "🎁 Твой друг активировал BETWEEN! Тебе начислены +7 дней доступа и 70 AI-ответов. Спасибо, что приглашаешь друзей. 🤍",
+            false
+          );
+        }
+      } catch (notificationError) {
+        console.error("Referral bonus notification failed:", notificationError);
+      }
+    }
+  }
 }
 
 // CALLBACK QUERY
@@ -458,6 +694,26 @@ async function handleCallbackQuery(update: any) {
   if (!chatId || !telegramUser) return true;
   const user = await getOrCreateTelegramUser(telegramUser);
   await telegramRequest("answerCallbackQuery", { callback_query_id: callbackId });
+
+  if (data === "subscription") {
+    await showSubscription(chatId, user.id);
+    return true;
+  }
+
+  if (data === "subscription_buy") {
+    await sendSubscriptionInvoice(chatId, user.id);
+    return true;
+  }
+
+  if (data === "referral") {
+    await showReferralInfo(chatId, user.id);
+    return true;
+  }
+
+  if (data === "access_status") {
+    await showAccessStatus(chatId, user.id);
+    return true;
+  }
 
   if (data === "settings_memory") {
     await showMemories(chatId, user.id);
@@ -571,6 +827,11 @@ Deno.serve(async (req) => {
     incomingUpdate = await req.json();
     const update = incomingUpdate;
 
+    if (update?.pre_checkout_query) {
+      await handlePreCheckoutQuery(update.pre_checkout_query);
+      return new Response("OK", { status: 200 });
+    }
+
     if (update?.callback_query) {
       await handleCallbackQuery(update);
       return new Response("OK", { status: 200 });
@@ -580,6 +841,12 @@ Deno.serve(async (req) => {
     if (!message?.chat?.id) return new Response("OK", { status: 200 });
     const telegramUser = message.from;
     const chatId = message.chat.id;
+
+    if (message.successful_payment) {
+      await handleSuccessfulPayment(message);
+      return new Response("OK", { status: 200 });
+    }
+
     const userText = typeof message.text === "string" ? message.text.trim() : "";
     if (!userText) return new Response("OK", { status: 200 });
 
@@ -590,8 +857,9 @@ Deno.serve(async (req) => {
       return new Response("OK", { status: 200 });
     }
 
-    if (userText === "/start") {
-      await handleStart(chatId, telegramUser);
+    if (/^\/start(?:@\w+)?(?:\s|$)/.test(userText)) {
+      const startPayload = userText.split(/\s+/)[1] ?? "";
+      await handleStart(chatId, telegramUser, startPayload);
       return new Response("OK", { status: 200 });
     }
 
