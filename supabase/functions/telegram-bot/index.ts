@@ -126,13 +126,31 @@ function parseAIResponse(text: string) {
   cleaned = cleaned.replace(/^\x60\x60\x60json\s*/i, "").replace(/^\x60\x60\x60\s*/i, "").replace(/\s*\x60\x60\x60$/, "").trim();
   const firstBrace = cleaned.indexOf("{");
   const lastBrace = cleaned.lastIndexOf("}");
-  if (firstBrace !== -1 && lastBrace !== -1) cleaned = cleaned.slice(firstBrace, lastBrace + 1);
-  try {
-    return JSON.parse(cleaned);
-  } catch (error) {
-    console.error("AI JSON parse failed:", cleaned);
-    throw new Error(`Could not parse AI response as JSON: ${error}`);
+
+  if (firstBrace !== -1 && lastBrace !== -1) {
+    const jsonText = cleaned.slice(firstBrace, lastBrace + 1);
+    try {
+      const parsed = JSON.parse(jsonText);
+      if (parsed && typeof parsed === "object") return parsed;
+    } catch (error) {
+      console.error("AI JSON parse failed; trying to recover answer:", error);
+      const answerMatch = jsonText.match(/"answer"\s*:\s*"((?:\\.|[^"\\])*)"/s);
+      if (answerMatch) {
+        try {
+          return { answer: JSON.parse(\`"\${answerMatch[1]}"\`), memory: { should_save: false } };
+        } catch {
+          // Fall through to a safe user-facing response.
+        }
+      }
+      return {
+        answer: "Извини, сейчас не получилось сформировать ответ. Попробуй, пожалуйста, ещё раз.",
+        memory: { should_save: false },
+      };
+    }
   }
+
+  // Some providers may ignore the JSON-only instruction; preserve plain-text answers.
+  return { answer: cleaned, memory: { should_save: false } };
 }
 
 // TELEGRAM USER
@@ -199,8 +217,9 @@ async function saveMemory(userId: string, memory: any) {
   }
   const categories = ["relocation", "location", "work", "family", "relationships", "goals", "preferences", "life", "other"];
   const category = categories.includes(memory.category) ? memory.category : "other";
-  let importance = typeof memory.importance === "number" ? memory.importance : 1;
-  importance = Math.max(1, Math.min(3, importance));
+  // The database stores importance on a 0..1 scale, while the AI prompt uses 1..3.
+  const aiImportance = typeof memory.importance === "number" ? memory.importance : 1;
+  const importance = Math.max(0, Math.min(1, (aiImportance - 1) / 2));
   const { error } = await supabase.from("memories").insert({
     user_id: userId,
     content: memory.content.trim(),
@@ -603,9 +622,11 @@ async function handleCallbackQuery(update: any) {
 
 // MAIN WEBHOOK
 Deno.serve(async (req) => {
+  let incomingUpdate: any = null;
   try {
     if (req.method !== "POST") return new Response("OK", { status: 200 });
-    const update = await req.json();
+    incomingUpdate = await req.json();
+    const update = incomingUpdate;
 
     if (update?.callback_query) {
       await handleCallbackQuery(update);
@@ -638,6 +659,18 @@ Deno.serve(async (req) => {
     return new Response("OK", { status: 200 });
   } catch (error) {
     console.error("Telegram bot error:", error);
+    const failedChatId = incomingUpdate?.message?.chat?.id ?? incomingUpdate?.callback_query?.message?.chat?.id;
+    if (failedChatId) {
+      try {
+        await sendTelegramMessage(
+          failedChatId,
+          "Извини, сейчас возникла техническая ошибка. Попробуй ещё раз чуть позже."
+        );
+      } catch (notificationError) {
+        console.error("Could not notify Telegram user about the error:", notificationError);
+      }
+    }
+    // Telegram webhooks should receive 200 to avoid endless retries for a failed update.
     return new Response("OK", { status: 200 });
   }
 });
