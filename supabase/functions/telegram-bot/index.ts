@@ -298,7 +298,7 @@ async function showReferralInfo(chatId: number | string, userId: string) {
   const referrals = data ?? [];
   const rewarded = referrals.filter((r: any) => r.bonus_granted).length;
   const inProgress = referrals.filter((r: any) => !r.bonus_granted).length;
-  const text = `🎁 Приглашай друзей в BETWEEN\n\nТвоя персональная ссылка:\n${link}\n\nЗа каждого приглашённого друга ты получишь +7 дней доступа и 70 AI-ответов, когда он отправит 5 AI-сообщений.\n\nПриглашено: ${referrals.length}\nБонус начислен: ${rewarded}\nОжидают активации: ${inProgress}\n\nБонус начисляется один раз за нового пользователя. Самоприглашения и повторные бонусы не засчитываются.`;
+  const text = `🎁 Приглашай друзей в BETWEEN\n\nТвоя персональная ссылка:\n${link}\n\nЗа каждого приглашённого друга ты получишь +7 дней доступа и 70 AI-ответов, когда BETWEEN ответит ему 5 раз.\n\nПриглашено: ${referrals.length}\nБонус начислен: ${rewarded}\nОжидают активации: ${inProgress}\n\nБонус начисляется один раз за нового пользователя. Самоприглашения и повторные бонусы не засчитываются.`;
   await sendTelegramMessage(chatId, text, true, { inline_keyboard: [
     [{ text: "📊 Мой доступ", callback_data: "access_status" }],
     [{ text: "💎 Подписка", callback_data: "subscription" }],
