@@ -123,7 +123,7 @@ async function callOpenRouter(messages: any[]) {
 // PARSE AI JSON
 function parseAIResponse(text: string) {
   let cleaned = text.trim();
-  cleaned = cleaned.replace(/^\`\`\`json\s*/i, "").replace(/^\`\`\`\s*/i, "").replace(/\s*\`\`\`$/, "").trim();
+  cleaned = cleaned.replace(/^\x60\x60\x60json\s*/i, "").replace(/^\x60\x60\x60\s*/i, "").replace(/\s*\x60\x60\x60$/, "").trim();
   const firstBrace = cleaned.indexOf("{");
   const lastBrace = cleaned.lastIndexOf("}");
   if (firstBrace !== -1 && lastBrace !== -1) cleaned = cleaned.slice(firstBrace, lastBrace + 1);
